@@ -1,4 +1,6 @@
-tensorflow
+python
+pip
+TensorFlow
 streamlit
 yfinance
 pandas
