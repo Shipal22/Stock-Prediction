@@ -1,11 +1,11 @@
-yfinance
-TA-Lib
-tensorflow
-plotly
-seaborn
 streamlit
+yfinance
 pandas
 numpy
-matplotlib
 scikit-learn
+TA-Lib
+tensorflow
+matplotlib
+plotly
+seaborn
 
