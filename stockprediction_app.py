@@ -16,12 +16,7 @@ import seaborn as sns
 import warnings
 warnings.filterwarnings('ignore')
 
-# --- Page Configuration ---
 st.set_page_config(page_title="Advanced Stock Prediction Engine", layout="wide")
-
-#==============================================================================
-# 1. DATA PROCESSING FUNCTIONS
-#==============================================================================
 
 @st.cache_data
 def fetch_data(ticker, start, end):
@@ -31,13 +26,11 @@ def fetch_data(ticker, start, end):
         if df is None or df.empty:
             return None
 
-        # Normalize columns (yfinance can return MultiIndex or different names)
+        
         if isinstance(df.columns, pd.MultiIndex):
-            # If user passed a single ticker but got multiindex, take first level names
-            # e.g., ('Open',) -> 'Open' or ('Adj Close',) -> 'Adj Close'
             df.columns = df.columns.get_level_values(0)
 
-        # Unify common variations
+       
         rename_map = {
             "Adj Close": "Adj Close",
             "adjclose": "Adj Close",
@@ -49,25 +42,22 @@ def fetch_data(ticker, start, end):
         }
         df = df.rename(columns=rename_map)
 
-        # If Close missing but Adj Close present, use Adj Close as Close
+       
         if "Close" not in df.columns and "Adj Close" in df.columns:
             df["Close"] = df["Adj Close"]
 
         required = ["Open", "High", "Low", "Close", "Volume"]
         missing = [c for c in required if c not in df.columns]
         if missing:
-            # Some feeds miss Volume for indices/crypto; try to fill minimal viable defaults
+            
             if "Volume" in missing:
                 df["Volume"] = 0.0
                 missing = [c for c in missing if c != "Volume"]
-            if missing:  # still missing critical OHLC
+            if missing: 
                 return None
-
-        # Ensure numeric dtypes
         for c in ["Open", "High", "Low", "Close", "Volume"]:
             df[c] = pd.to_numeric(df[c], errors="coerce")
         df = df.dropna(subset=["Open", "High", "Low", "Close"])
-
         return df
     except Exception as e:
         st.error(f"Error fetching data: {e}")
@@ -76,14 +66,11 @@ def fetch_data(ticker, start, end):
 def calculate_features(df):
     """Calculates technical indicators using TA-Lib with additional features."""
     try:
-        # Ensure required columns exist
         required_cols = ['Open', 'High', 'Low', 'Close', 'Volume']
         missing_cols = [col for col in required_cols if col not in df.columns]
         if missing_cols:
             st.error(f"Missing required columns: {missing_cols}")
             return df
-
-        # Convert to numpy arrays (float64)
         close_prices = np.asarray(df['Close'], dtype=np.float64).flatten()
         high_prices  = np.asarray(df['High'],  dtype=np.float64).flatten()
         low_prices   = np.asarray(df['Low'],   dtype=np.float64).flatten()
@@ -94,7 +81,6 @@ def calculate_features(df):
             st.warning("Insufficient data for technical indicators. Some features may be missing.")
             return df
 
-        # Technical indicators
         df['RSI'] = talib.RSI(close_prices, timeperiod=14)
 
         macd_result = talib.MACD(close_prices, fastperiod=12, slowperiod=26, signalperiod=9)
@@ -114,13 +100,12 @@ def calculate_features(df):
         df['CCI'] = talib.CCI(high_prices, low_prices, close_prices, timeperiod=14)
         df['Williams_R'] = talib.WILLR(high_prices, low_prices, close_prices, timeperiod=14)
 
-        # Price-based features
         df['Price_Change'] = df['Close'].pct_change()
         df['Volume_Change'] = df['Volume'].pct_change()
         df['High_Low_Ratio'] = df['High'] / df['Low']
         df['Close_Open_Ratio'] = df['Close'] / df['Open']
 
-        # Volatility features
+
         df['Volatility_5'] = df['Price_Change'].rolling(window=5).std()
         df['Volatility_20'] = df['Price_Change'].rolling(window=20).std()
 
@@ -145,10 +130,8 @@ def calculate_features(df):
 def prepare_data_for_lstm(df):
     """Prepares data for LSTM with enhanced feature set."""
     try:
-        # Target variable
+       
         df['Direction'] = (df['Close'].shift(-1) > df['Close']).astype(int)
-        # NOTE: keep the last NaN row (from shift) until after scaling alignment
-        # We'll align Direction by index later.
 
         potential_features = [
             'Open','High','Low','Close','Volume','RSI','MACD','MACD_signal',
@@ -179,10 +162,8 @@ def prepare_data_for_lstm(df):
 
         scaled_feature_data.dropna(inplace=True)
 
-        # Align Direction to the scaled features index, then drop any remaining NaN
+       
         direction_aligned = df.loc[scaled_feature_data.index, 'Direction'].dropna()
-
-        # Ensure the feature frame and target share the same index
         common_idx = scaled_feature_data.index.intersection(direction_aligned.index)
         scaled_feature_data = scaled_feature_data.loc[common_idx]
         direction_aligned = direction_aligned.loc[common_idx].astype(int)
@@ -193,7 +174,6 @@ def prepare_data_for_lstm(df):
 
     except Exception as e:
         st.error(f"Error preparing data for LSTM: {e}")
-        # Minimal fallback
         scaled_data = pd.DataFrame(index=df.index)
         if 'Close' not in df.columns:
             raise ValueError("Close column missing; cannot create fallback features.")
@@ -202,10 +182,6 @@ def prepare_data_for_lstm(df):
         direction = (df['Close'].shift(-1) > df['Close']).astype(int).dropna()
         common_idx = scaled_data.index.intersection(direction.index)
         return scaled_data.loc[common_idx], direction.loc[common_idx], {'Close': scaler}
-
-#==============================================================================
-# 2. MODEL TRAINING FUNCTION
-#==============================================================================
 
 @st.cache_resource
 def train_classifier_model(scaled_feature_data, direction_target, lookback_period=60):
@@ -219,21 +195,17 @@ def train_classifier_model(scaled_feature_data, direction_target, lookback_perio
             y_clf.append(direction_target.iloc[i])
 
     X_clf, y_clf = np.array(X_clf), np.array(y_clf)
-
-    # Guard against insufficient data
+    
     if len(X_clf) < 100:
         raise ValueError("Not enough sequences after lookback to train the model. Try earlier start date or shorter lookback.")
 
     split_idx = int(len(X_clf) * 0.8)
     X_train, X_val = X_clf[:split_idx], X_clf[split_idx:]
     y_train, y_val = y_clf[:split_idx], y_clf[split_idx:]
-
-    # Class weights
     classes = np.unique(y_train)
     cw = class_weight.compute_class_weight(class_weight='balanced', classes=classes, y=y_train)
     class_weights_dict = {int(k): float(v) for k, v in zip(classes, cw)}
 
-    # Model
     clf_model = Sequential([
         LSTM(units=100, return_sequences=True, input_shape=(X_clf.shape[1], X_clf.shape[2])),
         BatchNormalization(),
@@ -278,10 +250,6 @@ def train_classifier_model(scaled_feature_data, direction_target, lookback_perio
     y_pred = (y_pred_prob > 0.5).astype(int)
 
     return clf_model, history, (y_val, y_pred, y_pred_prob)
-
-#==============================================================================
-# 3. PLOTTING FUNCTIONS
-#==============================================================================
 
 def plot_price_history(df, ticker):
     fig = go.Figure()
@@ -333,15 +301,7 @@ def plot_confusion_matrix(y_true, y_pred):
     plt.title('Confusion Matrix'); plt.ylabel('Actual'); plt.xlabel('Predicted')
     return fig
 
-#==============================================================================
-# 4. STREAMLIT APP
-#==============================================================================
 
-# ==============================================================================
-# 4. STREAMLIT APP (ENHANCED UI)
-# ==============================================================================
-
-# --- Page Configuration ---
 st.set_page_config(
     page_title="Stock Prediction Engine",
     page_icon="🚀",
@@ -349,7 +309,7 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# --- Main Title ---
+
 st.title("🚀 Advanced Stock Prediction Engine")
 st.markdown("""
 Train a sophisticated **LSTM Neural Network** with advanced technical indicators.
@@ -357,11 +317,9 @@ Get real-time predictions on stock market direction with confidence scoring. �
 """)
 st.divider()
 
-# --- Sidebar for User Inputs ---
+
 with st.sidebar:
     st.header("⚙️ Model Configuration")
-    
-    # Use a form for a cleaner look and single-submit action
     with st.form(key='settings_form'):
         ticker = st.text_input("Stock Ticker", "TSLA").upper()
         
@@ -382,15 +340,14 @@ with st.sidebar:
             help="Number of previous days' data the model uses to make a prediction."
         )
         
-        # The submit button for the form
+        
         run_button = st.form_submit_button(label="🎯 Train Model & Predict", use_container_width=True)
 
-# --- Main App Logic ---
 if run_button:
     try:
         progress_bar = st.progress(0, text="Initializing...")
         
-        # 1. Data Fetching
+       
         progress_bar.progress(10, text=f"📊 Fetching historical data for {ticker}...")
         raw_df = fetch_data(ticker, start_date, pd.to_datetime('today'))
         
@@ -398,26 +355,22 @@ if run_button:
             st.error(f"❌ Insufficient data for {ticker}. Please select an earlier start date or a different ticker.")
             progress_bar.empty()
         else:
-            # 2. Feature Engineering
+        
             progress_bar.progress(30, text="🔧 Engineering features from market data...")
             featured_df = calculate_features(raw_df.copy())
             scaled_features, direction, scalers = prepare_data_for_lstm(featured_df.copy())
-
-            # 3. Model Training
             progress_bar.progress(60, text="🧠 Training the LSTM Neural Network...")
-            # Note: Ensure train_classifier_model does NOT have X_train in its return signature
-            # if you are not using the SHAP feature importance plot.
             model, history, eval_data = train_classifier_model(
                 scaled_features, direction, lookback_period
             )
 
-            # 4. Prediction
+            
             progress_bar.progress(90, text="🔮 Generating tomorrow's prediction...")
             last_sequence = scaled_features.values[-lookback_period:]
             X_pred = np.array([last_sequence])
             prediction_prob = model.predict(X_pred, verbose=0)[0, 0]
             
-            # --- Prepare Final Results ---
+           
             last_close = raw_df['Close'].iloc[-1]
             predicted_direction = "⬆️ UP" if prediction_prob > 0.5 else "⬇️ DOWN"
             confidence = prediction_prob if prediction_prob > 0.5 else 1 - prediction_prob
@@ -426,10 +379,9 @@ if run_button:
             progress_bar.progress(100, text="✅ Analysis Complete!")
             progress_bar.empty()
 
-            # --- Display Results ---
-            st.subheader(f"Results for {ticker}")
             
-            # KPI Metrics in a styled container
+            st.subheader(f"Results for {ticker}")
+           
             with st.container(border=True):
                 kpi1, kpi2, kpi3, kpi4 = st.columns(4)
                 kpi1.metric("💲 Last Close Price", f"${last_close:,.2f}")
@@ -437,7 +389,7 @@ if run_button:
                 kpi3.metric("🎯 Confidence Score", f"{confidence:.2%}")
                 kpi4.metric("✅ Model Accuracy", f"{val_accuracy:.2%}")
 
-            # Tabs for detailed analysis
+           
             tab1, tab2, tab3 = st.tabs(["📈 Training Performance", "📊 Historical Data", "💡 Model Insights"])
 
             with tab1:
@@ -454,14 +406,14 @@ if run_button:
                 
                     st.subheader("Classification Report")
 
-    # Convert classification report to a DataFrame
+    
                 report_dict = classification_report(
         y_true, y_pred, target_names=['Down', 'Up'], output_dict=True
     )
                 report_df = pd.DataFrame(report_dict).transpose()
                 report_df = report_df.round(3)
 
-    # Show as a styled DataFrame
+   
                 st.dataframe(
         report_df.style.background_gradient(cmap="Blues"),
         use_container_width=True
@@ -493,4 +445,4 @@ if run_button:
     except Exception as e:
         st.error(f"❌ An unexpected error occurred. Please try again.")
 
-        st.exception(e) # This will print the full traceback for debugging
+        st.exception(e) 
