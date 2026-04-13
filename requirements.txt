@@ -7,5 +7,5 @@ TA-Lib
 matplotlib
 plotly
 seaborn
-tenserflow
+tenser-flow
 keras
