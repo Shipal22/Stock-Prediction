@@ -1,11 +1,10 @@
-tensorflow
 streamlit
-yfinance
 pandas
 numpy
+yfinance
 scikit-learn
-talib
 matplotlib
 plotly
 seaborn
-keras
+tensorflow==2.15.*
+keras==2.15.*
